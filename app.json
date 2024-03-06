@@ -1,7 +1,7 @@
 {
   "expo": {
     "name": "SmartShop",
-    "slug": "SmartShop",
+    "slug": "smartshop",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -15,16 +15,24 @@
       "**/*"
     ],
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.aanandsa.smartshop"
     },
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#ffffff"
-      }
+      },
+      "package": "com.aanandsa.smartshop"
     },
     "web": {
       "favicon": "./assets/favicon.png"
-    }
+    },
+    "extra": {
+      "eas": {
+        "projectId": "dffd7465-54b7-45a2-84b8-e984fd9ddc95"
+      }
+    },
+    "owner": "smartshop-smart-grocery-list"
   }
 }
