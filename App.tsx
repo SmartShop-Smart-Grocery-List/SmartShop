@@ -7,11 +7,13 @@ import {createBottomTabNavigator} from  '@react-navigation/bottom-tabs';
 import HomePage from './src/components/HomePage';
 import LogPage from './src/components/LogPage';
 import NamePage from './src/components/NamePage';
+import Dashboard from './src/components/Dashboard';
 const Tab = createBottomTabNavigator();
 
 function MyTabs() {
   return (
       <Tab.Navigator>
+        <Tab.Screen name = "Dashboard" component = {Dashboard}/>
         <Tab.Screen name = "Home" component = {HomePage}/>
         <Tab.Screen name = "Log" component = {LogPage}/>
       </Tab.Navigator>
