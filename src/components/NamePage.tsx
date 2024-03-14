@@ -5,6 +5,7 @@ import Icon from '../images/icon.jpg'
 import Bowl from '../images/bowl.png'
 import SmartEats from '../images/SmartEats.png'
 import axios from 'axios';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 interface TestRowProps {
     // Other properties
     handleTextAreaUpdate: (newValue: string) => void;
@@ -59,6 +60,7 @@ export default function NamePage({clickButton}:any){
                         <Image className = "" source = {Icon}/>
                         <Text className = "p-2 text-lg" style={{color: "#4A2ED6"}} title = "Submit" onPress = {()=>{
                             clickButton(true)
+                            AsyncStorage.setItem('currentUser', name)
                             submit()
                         }
 

@@ -1,5 +1,5 @@
 import { StatusBar } from 'expo-status-bar';
-import { FlatList, Platform, SafeAreaView, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { FlatList, Platform, SafeAreaView, ScrollView, StyleSheet, Text, View, TouchableOpacity} from 'react-native';
 import React, { useCallback, useEffect, useState } from 'react';
 import * as SQLite from 'expo-sqlite';
 import * as FileSystem from 'expo-file-system';
@@ -17,13 +17,14 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 global.Buffer = require('buffer').Buffer;
 
 const redirectUri = AuthSession.makeRedirectUri();
-const baseUrl = 'https://db01-2603-8000-75f0-800-22a-61d7-54c7-2e5f.ngrok-free.app/fitbitdata';
+const baseUrl = 'https://e2d6-2603-8000-75f0-800-22a-61d7-54c7-2e5f.ngrok-free.app/fitbitdata';
 const config = {
   clientId: '23RVFQ',
   clientSecret: 'e1c3d08ba9bf0d10162b5f5395a6d8ba',
   scopes: ['heartrate', 'activity', 'profile', 'sleep'],
 };
-let flag = true;
+let authFlag = true;
+let browserSessionActive = false;
 
 export default function App() {
   const [data, setData] = useState<any[]>([]);
@@ -31,17 +32,210 @@ export default function App() {
   const [codeVerifier, setCodeVerifier] = useState<string>('');
   const [codeChallenge, setCodeChallenge] = useState<string>('');
   const [authorized, setAuthorized] = useState<boolean>(false);
+  const [username, setUsername] = useState('');
+  const [isNewUser, setIsNewUser] = useState<boolean>(false);
+  const [authFlagFirstEffect, setAuthFlagFirstEffect] = useState(true);
+  const [authFlagSecondEffect, setAuthFlagSecondEffect] = useState(true);
 
-  useEffect(() => {
-    const initCodeVerifier = async () => {
-      const verifier = await generateCodeVerifier();
+  const storeUsername = async (username: string) => {
+    try {
+      let usernames: string[] = [];
+      const storedUsernames = await AsyncStorage.getItem('Usernames');
+      if (storedUsernames) {
+        usernames = JSON.parse(storedUsernames);
+      }
+
+      if (!usernames.includes(username)) {
+        usernames.push(username);
+      }
+
+      await AsyncStorage.setItem('Usernames', JSON.stringify(usernames));
+    } catch (error) {
+      console.error('Error storing username:', error);
+    }
+  };
+
+  const checkUserExists = async () => {
+    try {
+      const currentUser = await AsyncStorage.getItem('currentUser');
+
+      if (currentUser) {
+        let usernames: string[] = [];
+        const storedUsernames = await AsyncStorage.getItem('Usernames');
+        if (storedUsernames) {
+          usernames = JSON.parse(storedUsernames);
+        }
+        return usernames.includes(currentUser);
+      }
+      return false;
+    } catch (error) {
+      console.error('Error checking if user exists:', error);
+      return false;
+    }
+  };
+
+  const generateCodeVerifier = async () => {
+    try {
+      const randomBytes = await getRandomBytesAsync(32);
+      const base64Encoded = fromByteArray(randomBytes);
+      const verifier = base64url.encode(base64Encoded);
       setCodeVerifier(verifier);
+      await AsyncStorage.setItem('codeVerifier', verifier);
+      const codeChallenge = await generateCodeChallenge(verifier);
+      setCodeChallenge( codeChallenge );
+      console.log('Verifier: ', verifier);
+      return verifier;
+    } catch (error) {
+      console.error("Error generating code verifier:", error);
+      throw error;
+    }
+  };
+
+  const generateCodeChallenge = async (codeVerifier: string) => {
+    try {
+      const digest = await digestStringAsync(CryptoDigestAlgorithm.SHA256, codeVerifier);
+      return base64url.encode(digest);
+    } catch (error) {
+      console.error("Error generating code challenge:", error);
+      throw error;
+    }
+  };
+
+  const getFitbitAuthUrl = async () => {
+    try {
+      await generateCodeVerifier();
+      const URL = 'https://www.fitbit.com/oauth2/authorize';
+      const queryParams = qs.stringify({
+        client_id: config.clientId,
+        response_type: 'code',
+        scope: config.scopes.join(' '),
+        redirect_uri: redirectUri,
+        expires_in: '31536000',
+        code_challenge: codeChallenge,
+        code_challenge_method: 'S256'
+      });
+
+      console.log(`${URL}?${queryParams}`);
+      return `${URL}?${queryParams}`;
+    } catch (error) {
+      console.error("Error getting Fitbit auth URL:", error);
+      throw error;
+    }
+  };
+
+  const _onPage = async () => {
+    if (browserSessionActive) {
+      console.log('Browser session is already active!');
+      return;
+    }
+    browserSessionActive = true;
+    const authUrl = await getFitbitAuthUrl();
+    try {
+      let result = await WebBrowser.openBrowserAsync(authUrl);
+      setResult(result);
+    } catch (error) {
+      console.error("Error opening browser:", error);
+    } finally {
+      browserSessionActive = false;
+    }
+  };
+
+  const fetchTokensForExistingUser = async (username: string) => {
+    try {
+      const accessToken = await AsyncStorage.getItem(`${username}_access_token`);
+      const refreshToken = await AsyncStorage.getItem(`${username}_refresh_token`);
+
+      if (accessToken && refreshToken) {
+        return {access_token: accessToken, refresh_token: refreshToken};
+      }
+
+      return null;
+    } catch (error) {
+      console.error('Error fetching tokens for existing user:', error);
+      return null;
+    }
+  }
+
+  const sendTokensToServer = async (accessToken: string, refreshToken: string) => {
+    console.log('Sending tokens to server...');
+    
+    const data = new URLSearchParams();
+    data.append('access_token', accessToken);
+    data.append('refresh_token', refreshToken);
+
+    try {
+      const response = await fetch(baseUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: data.toString(),
+      });
+
+      if (response.ok) {
+        console.log('Tokens sent to server successfully.');
+      } else {
+        console.error('Failed to send tokens to server.');
+      }
+    } catch (error) {
+      console.error('Error sending tokens to server:', error);
+    }
+  }
+
+  useEffect(() => { /* RESPONSIBLE FOR INITIALIZATION */
+    const fetchUserData = async () => {
+      const storedUsername = await AsyncStorage.getItem('currentUser');
+      if (storedUsername) {
+        setUsername(storedUsername);
+      }
     };
-    initCodeVerifier();
-  }, []);
+
+    if (authFlagFirstEffect) {
+      fetchUserData();
+      console.log("First Initialization Wave Completed...");
+      setAuthFlagFirstEffect(false);
+    }
+  }, [authFlagFirstEffect]);
+
+  useEffect(() => { /* RESPONSIBLE FOR 2ND WAVE OF INITIALIZATION */
+    const checkAndInit = async () => {
+      const isNewUser = await checkUserExists();
+      if (isNewUser) {
+        setIsNewUser(true);
+        storeUsername(username);
+        _onPage();
+      } else {
+        const tokens = await fetchTokensForExistingUser(username);
+        if (tokens) { /* If tokens successfully retrieved, forward the information to the server */
+          sendTokensToServer(tokens.access_token, tokens.refresh_token);
+          setAuthorized(true);
+          prepareDatabase();
+        } else { /* otherwise communicate with api endpoint to retrieve new tokens and send those to the server */
+          const retryTokens = await fetchTokensForExistingUser(username);
+
+          if (retryTokens) {
+            sendTokensToServer(retryTokens.access_token, retryTokens.refresh_token);
+            setAuthorized(true);
+            prepareDatabase();
+          } else {
+            setIsNewUser(true);
+            storeUsername(username);
+            _onPage();
+          }
+        }
+      }
+    };
+
+    if (authFlagSecondEffect) {
+      checkAndInit();
+      console.log("Second Initialization Wave Completed...");
+      setAuthFlagSecondEffect(false);
+    }
+  }, [authFlagSecondEffect]);
 
   useEffect(() => {
-    const handleRedirect = async ({ url }: { url: string }) => {
+    const handleRedirect = async ({ url }: { url: string }) => { /* RESPONSIBLE FOR REDIRECTS FROM API */
+      console.log("Users:", await AsyncStorage.getItem('Usernames'));  
       const deeplink = URL(url, true);
     
       const uri = 'https://api.fitbit.com/oauth2/token';
@@ -65,6 +259,8 @@ export default function App() {
     
         if (response.ok) {
           const r = await response.json();
+          await AsyncStorage.setItem(`${username}_access_token`, r.access_token);
+          await AsyncStorage.setItem(`${username}_refresh_token`, r.refresh_token);
           await sendTokensToServer(r.access_token, r.refresh_token);
           setAuthorized(true);
           prepareDatabase();
@@ -77,69 +273,16 @@ export default function App() {
       }
     };    
 
-    if (flag) {
+    if (authFlag && isNewUser) {
+      console.log('User is new, handling redirect now...');
       Linking.addEventListener('url', handleRedirect);
+      authFlag = false;
     }
 
     return () => {
-      flag = false;
+      /* empty */
     };
-  }, [codeVerifier, codeChallenge]);
-
-  const generateCodeVerifier = async () => {
-    try {
-      const randomBytes = await getRandomBytesAsync(32);
-      const base64Encoded = fromByteArray(randomBytes);
-      const verifier = base64url.encode(base64Encoded);
-      await AsyncStorage.setItem('codeVerifier', verifier);
-      setCodeChallenge(await generateCodeChallenge(verifier));
-      return verifier;
-    } catch (error) {
-      console.error("Error generating code verifier:", error);
-      throw error;
-    }
-  };
-
-  const generateCodeChallenge = async (codeVerifier: string) => {
-    try {
-      const digest = await digestStringAsync(CryptoDigestAlgorithm.SHA256, codeVerifier);
-      return base64url.encode(digest);
-    } catch (error) {
-      console.error("Error generating code challenge:", error);
-      throw error;
-    }
-  };
-
-  const getFitbitAuthUrl = async () => {
-    try {
-      const URL = 'https://www.fitbit.com/oauth2/authorize';
-      const queryParams = qs.stringify({
-        client_id: config.clientId,
-        response_type: 'code',
-        scope: config.scopes.join(' '),
-        redirect_uri: redirectUri,
-        expires_in: '31536000',
-        code_challenge: codeChallenge,
-        code_challenge_method: 'S256'
-      });
-
-      return `${URL}?${queryParams}`;
-    } catch (error) {
-      console.error("Error getting Fitbit auth URL:", error);
-      throw error;
-    }
-  };
-
-  const _onPage = async () => {
-    const authUrl = await getFitbitAuthUrl();
-    let result = await WebBrowser.openBrowserAsync(authUrl);
-    setResult(result);
-  };
-
-  useEffect(() => {
-    _onPage();
-  }, []);
-
+  }, [codeVerifier, codeChallenge, isNewUser]);
 
   const prepareDatabase = async () => {
     if (!(await FileSystem.getInfoAsync(FileSystem.documentDirectory + 
@@ -173,30 +316,6 @@ export default function App() {
           });
   };
 
-  const sendTokensToServer = async (accessToken: string, refreshToken: string) => {
-    const data = new URLSearchParams();
-    data.append('access_token', accessToken);
-    data.append('refresh_token', refreshToken);
-
-    try {
-      const response = await fetch(baseUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-        },
-        body: data.toString(),
-      });
-
-      if (response.ok) {
-        console.log('Tokens sent to server successfully.');
-      } else {
-        console.error('Failed to send tokens to server.');
-      }
-    } catch (error) {
-      console.error('Error sending tokens to server:', error);
-    }
-  }
-
   const [isLoaded] = useFonts({
     "pacifico": require("../../assets/Pacifico-Regular.ttf"),
   });
@@ -228,7 +347,7 @@ export default function App() {
       <View style={styles.mainContent}>
         <View style={styles.headerWrapper}>
           <View style={styles.headerTitle}>
-            <Text style={styles.headerText}>Your Dashboard</Text>
+            <Text style={styles.headerText}>{username ? `${username}'s Dashboard` : `Your Dashboard`}</Text>
           </View>
         </View>
         <View style={styles.todayDataWrapper}>
@@ -299,17 +418,33 @@ const styles = StyleSheet.create({
     width: '100%',
     padding: 10,
     justifyContent: 'space-between',
-    alignSelf: 'flex-start'
+    alignSelf: 'flex-start',
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
+    shadowOpacity: 0.25,
+    shadowRadius: 3.84,
+    elevation: 5,
   },
   headerWrapper: {
     display: 'flex',
     justifyContent: 'space-between',
     alignItems: 'flex-start',
     flexWrap: 'wrap',
-    backgroundColor: 'rgba(128, 128, 128, 0.09)',
+    backgroundColor: '#fff',
     borderRadius: 7,
     margin: 10,
-    padding: 10
+    padding: 10,
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
+    shadowOpacity: 0.25,
+    shadowRadius: 3.84,
+    elevation: 5,
   },
   headerTitle: {
     display: 'flex'
@@ -326,10 +461,18 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
     width: 'auto',
     height: 'auto',
-    backgroundColor: 'rgba(128, 128, 128, 0.09)',
+    backgroundColor: '#fff',
     borderRadius: 7,
     margin: 10,
     padding: 10,
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
+    shadowOpacity: 0.25,
+    shadowRadius: 3.84,
+    elevation: 5,
   },
   todayDataItemsWrapper: {
     display: 'flex',
@@ -352,6 +495,13 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     margin: 5,
     padding: 5,
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
+    shadowOpacity: 0.25,
+    shadowRadius: 3.84,
+    elevation: 5,
   },
   todayDataText: {
     textAlign: 'center',
@@ -361,32 +511,46 @@ const styles = StyleSheet.create({
 
   },
   steps: {
-    backgroundColor: 'rgba(0, 0, 255, 0.6)'
+    backgroundColor: 'rgba(0, 0, 255, 0.9)',
+    shadowColor: 'rgba(0, 0, 255, 0.3)',
   },
   distance: {
-    backgroundColor: 'rgba(0, 255, 0, 0.6)'
+    backgroundColor: 'rgba(0, 255, 0, 0.9)',
+    shadowColor: 'rgba(0, 255, 0, 0.5)'
   },
   maxhr: {
-    backgroundColor: 'rgba(255, 0, 0, 0.6)'
+    backgroundColor: 'rgba(255, 0, 0, 0.8)',
+    shadowColor: 'rgba(255, 0, 0, 0.5)',
   },
   minhr: {
-    backgroundColor: 'rgba(255, 0, 0, 0.5)'
+    backgroundColor: 'rgba(255, 0, 0, 0.8)',
+    shadowColor: 'rgba(255, 0, 0, 0.5)',
   },
   calories: {
-    backgroundColor: 'rgba(255, 165, 0, 0.6)'
+    backgroundColor: 'rgba(255, 165, 0, 0.9)',
+    shadowColor: 'rgba(255, 165, 0, 0.5)',
   },
   sleep: {
-    backgroundColor: 'rgba(0, 0, 128, 0.6)'
+    backgroundColor: 'rgba(0, 0, 128, 0.9)',
+    shadowColor: 'rgba(0, 0, 128, 0.5)',
   },
   averageDataWrapper: {
     display: 'flex',
     justifyContent: 'space-between',
     alignItems: 'flex-start',
     flexWrap: 'wrap',
-    backgroundColor: 'rgba(128, 128, 128, 0.09)',
+    backgroundColor: '#fff',
     borderRadius: 7,
     margin: 10,
-    padding: 10
+    padding: 10,
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
+    shadowOpacity: 0.25,
+    shadowRadius: 3.84,
+    elevation: 5,
   },
   averageDataItemsWrapper: {
     width: '100%',

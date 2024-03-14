@@ -8,12 +8,14 @@ import HomePage from './src/components/HomePage';
 import LogPage from './src/components/LogPage';
 import NamePage from './src/components/NamePage';
 import Dashboard from './src/components/Dashboard';
+import FoodRecommendationPage from './src/components/FoodRecommendation';
 const Tab = createBottomTabNavigator();
 
 function MyTabs() {
   return (
       <Tab.Navigator>
         <Tab.Screen name = "Dashboard" component = {Dashboard}/>
+        <Tab.Screen name = "Recommendation" component = {FoodRecommendationPage}/>
         <Tab.Screen name = "Home" component = {HomePage}/>
         <Tab.Screen name = "Log" component = {LogPage}/>
       </Tab.Navigator>
