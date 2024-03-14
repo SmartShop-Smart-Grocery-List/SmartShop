@@ -1,18 +1,145 @@
 import { StatusBar } from 'expo-status-bar';
-import { FlatList, SafeAreaView, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { FlatList, Platform, SafeAreaView, ScrollView, StyleSheet, Text, View } from 'react-native';
 import React, { useCallback, useEffect, useState } from 'react';
 import * as SQLite from 'expo-sqlite';
 import * as FileSystem from 'expo-file-system';
 import { Asset } from 'expo-asset';
 import { useFonts } from 'expo-font';
-import * as SplashScreen from 'expo-splash-screen';
+import * as AuthSession from 'expo-auth-session';
+import * as WebBrowser from 'expo-web-browser';
+import * as Linking from 'expo-linking';
+import qs from 'qs';
+import URL from 'url-parse';
+import { getRandomBytesAsync, CryptoDigestAlgorithm, digestStringAsync } from 'expo-crypto';
+import { fromByteArray } from 'base64-js';
+import base64url from 'base64url';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+global.Buffer = require('buffer').Buffer;
+
+const redirectUri = AuthSession.makeRedirectUri();
+const baseUrl = 'https://db01-2603-8000-75f0-800-22a-61d7-54c7-2e5f.ngrok-free.app/fitbitdata';
+const config = {
+  clientId: '23RVFQ',
+  clientSecret: 'e1c3d08ba9bf0d10162b5f5395a6d8ba',
+  scopes: ['heartrate', 'activity', 'profile', 'sleep'],
+};
+let flag = true;
 
 export default function App() {
   const [data, setData] = useState<any[]>([]);
-  
+  const [result, setResult] = useState<WebBrowser.WebBrowserResult>();
+  const [codeVerifier, setCodeVerifier] = useState<string>('');
+  const [codeChallenge, setCodeChallenge] = useState<string>('');
+  const [authorized, setAuthorized] = useState<boolean>(false);
+
   useEffect(() => {
-    prepareDatabase();
+    const initCodeVerifier = async () => {
+      const verifier = await generateCodeVerifier();
+      setCodeVerifier(verifier);
+    };
+    initCodeVerifier();
   }, []);
+
+  useEffect(() => {
+    const handleRedirect = async ({ url }: { url: string }) => {
+      const deeplink = URL(url, true);
+    
+      const uri = 'https://api.fitbit.com/oauth2/token';
+      const queryParams = qs.stringify({
+        client_id: config.clientId,
+        code: deeplink.query.code,
+        code_verifier: codeVerifier,
+        grant_type: 'authorization_code',
+        redirect_uri: redirectUri
+      });
+    
+      try {
+        const response = await fetch(`${uri}?${queryParams}`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'Authorization': `Basic ${Buffer.from(`${config.clientId}:${config.clientSecret}`).toString('base64')}`,
+          },
+          body: queryParams,
+        });
+    
+        if (response.ok) {
+          const r = await response.json();
+          await sendTokensToServer(r.access_token, r.refresh_token);
+          setAuthorized(true);
+          prepareDatabase();
+          console.log('Tokens fetched and sent successfully.');
+        } else {
+          console.error('Error fetching tokens - Status:', response.status, 'Message: ', await response.text());
+        }
+      } catch (error) {
+        console.error('Error fetching tokens:', error);
+      }
+    };    
+
+    if (flag) {
+      Linking.addEventListener('url', handleRedirect);
+    }
+
+    return () => {
+      flag = false;
+    };
+  }, [codeVerifier, codeChallenge]);
+
+  const generateCodeVerifier = async () => {
+    try {
+      const randomBytes = await getRandomBytesAsync(32);
+      const base64Encoded = fromByteArray(randomBytes);
+      const verifier = base64url.encode(base64Encoded);
+      await AsyncStorage.setItem('codeVerifier', verifier);
+      setCodeChallenge(await generateCodeChallenge(verifier));
+      return verifier;
+    } catch (error) {
+      console.error("Error generating code verifier:", error);
+      throw error;
+    }
+  };
+
+  const generateCodeChallenge = async (codeVerifier: string) => {
+    try {
+      const digest = await digestStringAsync(CryptoDigestAlgorithm.SHA256, codeVerifier);
+      return base64url.encode(digest);
+    } catch (error) {
+      console.error("Error generating code challenge:", error);
+      throw error;
+    }
+  };
+
+  const getFitbitAuthUrl = async () => {
+    try {
+      const URL = 'https://www.fitbit.com/oauth2/authorize';
+      const queryParams = qs.stringify({
+        client_id: config.clientId,
+        response_type: 'code',
+        scope: config.scopes.join(' '),
+        redirect_uri: redirectUri,
+        expires_in: '31536000',
+        code_challenge: codeChallenge,
+        code_challenge_method: 'S256'
+      });
+
+      return `${URL}?${queryParams}`;
+    } catch (error) {
+      console.error("Error getting Fitbit auth URL:", error);
+      throw error;
+    }
+  };
+
+  const _onPage = async () => {
+    const authUrl = await getFitbitAuthUrl();
+    let result = await WebBrowser.openBrowserAsync(authUrl);
+    setResult(result);
+  };
+
+  useEffect(() => {
+    _onPage();
+  }, []);
+
 
   const prepareDatabase = async () => {
     if (!(await FileSystem.getInfoAsync(FileSystem.documentDirectory + 
@@ -45,6 +172,30 @@ export default function App() {
             );
           });
   };
+
+  const sendTokensToServer = async (accessToken: string, refreshToken: string) => {
+    const data = new URLSearchParams();
+    data.append('access_token', accessToken);
+    data.append('refresh_token', refreshToken);
+
+    try {
+      const response = await fetch(baseUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: data.toString(),
+      });
+
+      if (response.ok) {
+        console.log('Tokens sent to server successfully.');
+      } else {
+        console.error('Failed to send tokens to server.');
+      }
+    } catch (error) {
+      console.error('Error sending tokens to server:', error);
+    }
+  }
 
   const [isLoaded] = useFonts({
     "pacifico": require("../../assets/Pacifico-Regular.ttf"),
@@ -98,13 +249,13 @@ export default function App() {
             <View style={[styles.todayDataItems, styles.maxhr]}>
               <View>
                 <Text style={styles.todayDataText}>Max HR</Text>
-                <Text style={styles.heartTextModified}>{data.length > 0 && data[data.length-1].restingHeartRate ? data[data.length-1].restingHeartRate + ' bpm': 'N/A'}</Text>
+                <Text style={styles.todayDataText}>{data.length > 0 && data[data.length-1].restingHeartRate ? data[data.length-1].restingHeartRate + ' bpm': 'N/A'}</Text>
               </View>
             </View>
             <View style={[styles.todayDataItems, styles.minhr]}>
               <View>
                 <Text style={styles.todayDataText}>Min HR</Text>
-                <Text style={styles.heartTextModified}>{data.length > 0 && data[data.length-1].maxHeartRate ? data[data.length-1].maxHeartRate + ' bpm': ''}</Text>
+                <Text style={styles.todayDataText}>{data.length > 0 && data[data.length-1].maxHeartRate ? data[data.length-1].maxHeartRate + ' bpm': 'N/A'}</Text>
               </View>
             </View>
             <View style={[styles.todayDataItems, styles.calories]}>
@@ -208,13 +359,6 @@ const styles = StyleSheet.create({
     fontSize: 50,
     color: 'white',
 
-  },
-  heartTextModified: {
-    fontFamily: 'pacifico',
-    textAlign: 'center',
-    fontWeight: 'bold',
-    fontSize: 35,
-    color: 'white',
   },
   steps: {
     backgroundColor: 'rgba(0, 0, 255, 0.6)'

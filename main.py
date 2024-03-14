@@ -11,13 +11,9 @@ CLIENT_ID     = env.getClientID()
 CLIENT_SECRET = env.getClientSecret()
 HOME = os.getcwd()
 
-def authenticate():
-    global auth2_client
 
-    server=Oauth2.OAuth2Server(CLIENT_ID, CLIENT_SECRET)
-    server.browser_authorize()
-    ACCESS_TOKEN=str(server.fitbit.client.session.token['access_token'])
-    REFRESH_TOKEN=str(server.fitbit.client.session.token['refresh_token'])
+def authenticate(ACCESS_TOKEN, REFRESH_TOKEN):
+    global auth2_client
     auth2_client=fitbit.Fitbit(CLIENT_ID, CLIENT_SECRET, oauth2=True, access_token=ACCESS_TOKEN, refresh_token=REFRESH_TOKEN)
 
 
@@ -138,64 +134,81 @@ def mergeCSV():
 
 
 def load_index():
-    if not os.path.isdir('index'): # index directory does not exist
-        os.makedirs('index')       # create index directory
-    os.chdir('index')              # change cwd to index
-    dir_path = os.getcwd()         # update cwd
-    if not os.listdir(dir_path):   # list dirs in index
+    index_path = os.path.join(HOME, 'index')
+
+    if not os.path.exists(index_path): # index directory does not exist
+        os.makedirs(index_path)       # create index directory
+    
+    os.chdir(index_path)              # change cwd to index
+    
+    dir_list = os.listdir(index_path)         # update cwd
+    
+    if not dir_list:   # list dirs in index
         os.makedirs('Week 1')      # if no dirs exist, create the first one
-        os.chdir('Week 1')         # update cwd to begin data archival
-        return
-                                   # otherwise,    
-    lst = os.listdir(dir_path)     # list all current directories
-    updated_index = int(lst[len(lst)-1][-1]) + 1 # update index
-    new_dir_name = f'Week {updated_index}' # create name of the next dir
-    os.makedirs(new_dir_name)              # create the next dir
-    os.chdir(new_dir_name)                 # update cwd to begin data archival
+    else:
+        last_dir = max(dir_list, key=lambda x: int(x.split(' ')[-1]))
+        last_index = int(last_dir.split(' ')[-1])
+        next_index = last_index + 1
+        next_dir_name = f'Week {next_index}'
+        os.makedirs(next_dir_name)
+    
+    os.chdir(next_dir_name)
 
 def setup_database():
     os.chdir(f'{HOME}/assets')
     
-    if ( os.path.exists(f'{HOME}/assets/data.mp4') ):
-        os.rename('data.mp4', 'data.db')
-    conn = sqlite3.connect('data.db')
-    cursor = conn.cursor()
+    # Close the database connection if it's open
+    conn = None
+    cursor = None
+    try:
+        if ( os.path.exists(f'{HOME}/assets/data.mp4') ):
+            os.rename('data.mp4', 'data.db')
+        conn = sqlite3.connect('data.db')
+        cursor = conn.cursor()
 
-    cursor.execute('''CREATE TABLE IF NOT EXISTS data (
-                   id INTEGER PRIMARY KEY AUTOINCREMENT,
-                   date TEXT,
-                   distance TEXT,
-                   steps TEXT,
-                   sleep TEXT,
-                   calories TEXT,
-                   restingHeartRate TEXT,
-                   maxHeartRate TEXT
-    )''')
+        cursor.execute('''CREATE TABLE IF NOT EXISTS data (
+                       id INTEGER PRIMARY KEY AUTOINCREMENT,
+                       date TEXT,
+                       distance TEXT,
+                       steps TEXT,
+                       sleep TEXT,
+                       calories TEXT,
+                       restingHeartRate TEXT,
+                       maxHeartRate TEXT
+        )''')
 
-    cursor.execute('''DELETE FROM data''')
+        cursor.execute('''DELETE FROM data''')
 
-    os.chdir(f'{HOME}/index')
-    dir = os.listdir( os.getcwd() )[-1]
-    os.chdir(dir)
+        os.chdir(f'{HOME}/index')
+        dir = os.listdir( os.getcwd() )[-1]
+        os.chdir(dir)
 
-    df = pd.read_csv('health_data.csv', header=None)
-    df.columns = ['date', 'distance', 'steps', 'sleep', 'calories', 'restingHeartRate', 'maxHeartRate']
+        df = pd.read_csv('health_data.csv', header=None)
+        df.columns = ['date', 'distance', 'steps', 'sleep', 'calories', 'restingHeartRate', 'maxHeartRate']
 
-    for index, row in df.iterrows():
-        try:
-            cursor.execute('''INSERT INTO data (date, distance, steps, sleep, calories, restingHeartRate, maxHeartRate)
-                                VALUES (?, ?, ?, ?, ?, ?, ?)''', 
-                            (row['date'], row['distance'], row['steps'], row['sleep'], row['calories'], 
-                            row['restingHeartRate'], row['maxHeartRate']))
-        except KeyError as e:
-            print(f"Error: {e} - One or more column names are missing in the DataFrame.")
-            continue
+        for index, row in df.iterrows():
+            try:
+                cursor.execute('''INSERT INTO data (date, distance, steps, sleep, calories, restingHeartRate, maxHeartRate)
+                                    VALUES (?, ?, ?, ?, ?, ?, ?)''', 
+                                (row['date'], row['distance'], row['steps'], row['sleep'], row['calories'], 
+                                row['restingHeartRate'], row['maxHeartRate']))
+            except KeyError as e:
+                print(f"Error: {e} - One or more column names are missing in the DataFrame.")
+                continue
 
-    conn.commit()
-    conn.close()
+        conn.commit()
+    except Exception as e:
+        print(f"Error setting up database: {e}")
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
 
+    # Rename the file outside of the try-except-finally block
     os.chdir(f'{HOME}/assets')
-    os.rename('data.db', 'data.mp4');
+    os.rename('data.db', 'data.mp4')
+
 
 
 def archive_data():
@@ -206,9 +219,3 @@ def archive_data():
     fetchCaloriesBurned()
     fetchHeartRate()
     mergeCSV()
-
-
-if __name__ == "__main__":
-    authenticate()
-    archive_data()
-    setup_database()
