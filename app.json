@@ -5,10 +5,10 @@
     "slug": "SmartShop",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/icon.png",
+    "icon": "./assets/SmartsEat.png",
     "userInterfaceStyle": "light",
     "splash": {
-      "image": "./assets/splash.png",
+      "image": "./assets/SmartsEat.png",
       "resizeMode": "contain",
       "backgroundColor": "#ffffff"
     },
