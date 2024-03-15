@@ -17,7 +17,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 global.Buffer = require('buffer').Buffer;
 
 const redirectUri = AuthSession.makeRedirectUri();
-const baseUrl = 'https://e2d6-2603-8000-75f0-800-22a-61d7-54c7-2e5f.ngrok-free.app/fitbitdata';
+const baseUrl = 'https://16f6-2603-8000-75f0-800-4fa-40ab-391a-2daf.ngrok-free.app/fitbitdata';
 const config = {
   clientId: '23RVFQ',
   clientSecret: 'e1c3d08ba9bf0d10162b5f5395a6d8ba',
